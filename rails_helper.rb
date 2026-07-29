@@ -1,7 +1,12 @@
 require 'spec_helper'
 ENV['RAILS_ENV'] ||= 'test'
 
-require File.expand_path('../config/environment', __dir__)
+default_application_root = File.expand_path("..", __dir__)
+unless File.exist?(File.join(default_application_root, "config/environment.rb"))
+  default_application_root = File.join(__dir__, "evaluation/compatibility_app")
+end
+application_root = ENV.fetch("EVALUATION_APP_ROOT", default_application_root)
+require File.join(application_root, "config/environment")
 
 abort("The Rails environment is running in production mode!") if Rails.env.production?
 require 'rspec/rails'
@@ -15,7 +20,7 @@ rescue ActiveRecord::PendingMigrationError => e
 end
 
 RSpec.configure do |config|
-  config.fixture_path = "#{::Rails.root}/spec/fixtures"
+  config.fixture_paths = [Rails.root.join("spec/fixtures")]
   config.use_transactional_fixtures = true
   config.infer_spec_type_from_file_location!
   config.filter_rails_from_backtrace!
