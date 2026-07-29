@@ -1,0 +1,122 @@
+#!/usr/bin/env ruby
+
+require "open3"
+require "rbconfig"
+
+ROOT = File.expand_path("..", __dir__)
+APP_ROOT = File.join(ROOT, "evaluation", "compatibility_app")
+RSPEC = Gem.bin_path("rspec-core", "rspec")
+RANDOM_SEED = "31415"
+
+SPEC_COUNTS = {
+  "controllers/exercises_controller_spec.rb" => 6,
+  "models/address_spec.rb" => 2,
+  "models/chinese_food_spec.rb" => 3,
+  "models/customer_spec.rb" => 2,
+  "models/food_spec.rb" => 3,
+  "models/italian_food_spec.rb" => 3,
+  "models/japanese_food_spec.rb" => 3,
+  "models/order_food_spec.rb" => 2,
+  "models/order_spec.rb" => 4,
+  "models/shop_spec.rb" => 2
+}.freeze
+MODEL_SPEC_COUNTS = SPEC_COUNTS.reject { |file, _| file.start_with?("controllers/") }.freeze
+
+def run_rspec(files:, formatter: "progress")
+  environment = {
+    "EVALUATION_APP_ROOT" => APP_ROOT,
+    "RAILS_ENV" => "test"
+  }
+  command = [
+    RbConfig.ruby,
+    RSPEC,
+    "--options",
+    File::NULL,
+    "-I",
+    ROOT,
+    *files,
+    "--order",
+    "random",
+    "--seed",
+    RANDOM_SEED,
+    "--format",
+    formatter
+  ]
+  command.push("--require", "./my_formatter.rb") if formatter == "MyFormatter"
+  Open3.capture3(environment, *command, chdir: ROOT)
+end
+
+def assert_result!(label, result, expected_examples:, expected_failures:)
+  stdout, stderr, status = result
+  output = "#{stdout}\n#{stderr}"
+  expected_summary = "#{expected_examples} examples, #{expected_failures} failures"
+  exact_summary_present = output.lines.map(&:strip).include?(expected_summary)
+
+  unless exact_summary_present && status.success? == expected_failures.zero?
+    warn "\n#{label} failed verification."
+    warn output
+    abort "Expected #{expected_summary} with exit success=#{expected_failures.zero?}."
+  end
+
+  puts "#{label}: #{expected_summary}"
+end
+
+all_files = SPEC_COUNTS.keys
+assert_result!(
+  "unimplemented full suite",
+  run_rspec(files: all_files),
+  expected_examples: SPEC_COUNTS.values.sum,
+  expected_failures: 6
+)
+
+MODEL_SPEC_COUNTS.each do |file, count|
+  assert_result!(
+    "isolated #{file}",
+    run_rspec(files: [file]),
+    expected_examples: count,
+    expected_failures: 0
+  )
+end
+
+assert_result!(
+  "isolated unimplemented controller",
+  run_rspec(files: ["controllers/exercises_controller_spec.rb"]),
+  expected_examples: SPEC_COUNTS.fetch("controllers/exercises_controller_spec.rb"),
+  expected_failures: 6
+)
+
+formatter_result = run_rspec(
+  files: ["controllers/exercises_controller_spec.rb"],
+  formatter: "MyFormatter"
+)
+formatter_stdout, formatter_stderr, formatter_status = formatter_result
+formatter_output = "#{formatter_stdout}\n#{formatter_stderr}"
+unless !formatter_status.success? &&
+    formatter_output.include?("title: 課題評価のフィードバック") &&
+    formatter_output.scan("❌").size == 6 &&
+    !formatter_output.include?("✅")
+  warn formatter_output
+  abort "MyFormatter did not report all six failing controller examples."
+end
+puts "feedback formatter: 6 failing examples"
+
+factory_command = [
+  RbConfig.ruby,
+  File.join(ROOT, "evaluation", "verify_factories.rb")
+]
+factory_stdout, factory_stderr, factory_status = Open3.capture3(
+  {
+    "EVALUATION_APP_ROOT" => APP_ROOT,
+    "RAILS_ENV" => "test"
+  },
+  *factory_command,
+  chdir: ROOT
+)
+unless factory_status.success?
+  warn factory_stdout
+  warn factory_stderr
+  abort "Factory definitions failed compatibility verification."
+end
+puts factory_stdout
+
+puts "Evaluation compatibility verification passed (random seed #{RANDOM_SEED})."

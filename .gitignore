@@ -1,0 +1,5 @@
+/.bundle/
+/log/*.log
+/tmp/
+/vendor/bundle/
+/evaluation/compatibility_app/log/*.log
